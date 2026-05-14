@@ -3,17 +3,22 @@ import { createClient, createServiceClient } from "@/lib/supabase/server"
 import Link from "next/link"
 import { LayoutDashboard, Upload, Briefcase, LogOut, Zap } from "lucide-react"
 
-async function ensureCompany(userId: string, userEmail: string): Promise<string> {
+async function ensureCompany(userId: string, userEmail: string): Promise<{ companyId: string; onboardingCompleted: boolean }> {
   const service = createServiceClient()
   const { data: membership } = await service
     .from("company_members").select("company_id").eq("user_id", userId).single()
-  if (membership) return membership.company_id
+
+  if (membership) {
+    const { data: company } = await service
+      .from("companies").select("id, onboarding_completed").eq("id", membership.company_id).single()
+    return { companyId: membership.company_id, onboardingCompleted: company?.onboarding_completed ?? false }
+  }
 
   const companyName = userEmail.split("@")[0] ?? "My Company"
   const { data: company } = await service.from("companies").insert({ name: companyName }).select("id").single()
   if (!company) throw new Error("Failed to create company")
   await service.from("company_members").insert({ company_id: company.id, user_id: userId, role: "owner" })
-  return company.id
+  return { companyId: company.id, onboardingCompleted: false }
 }
 
 const NAV = [
@@ -27,7 +32,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
-  await ensureCompany(user.id, user.email ?? "user")
+  const { onboardingCompleted } = await ensureCompany(user.id, user.email ?? "user")
+  if (!onboardingCompleted) redirect("/onboarding")
 
   const initials = (user.email ?? "U").slice(0, 2).toUpperCase()
 
