@@ -5,6 +5,7 @@ import { selectQuestions } from "@/lib/interview/question-selector"
 import type { PublicUTL, UTLJobProfile } from "@/lib/utl/schema"
 
 const SCORE_THRESHOLD = 6.0
+const MAX_OPPORTUNITIES = 5
 
 function buildTelegramUrl(rawToken: string): string {
   const username = process.env.TELEGRAM_BOT_USERNAME ?? ""
@@ -108,23 +109,29 @@ export async function matchTalentsToJob(jobId: string, companyId: string): Promi
 
   if (!candidates || candidates.length === 0) return
 
+  // Score all qualifying candidates
+  const scored: Array<{ candidateId: string; score: number }> = []
   for (const candidate of candidates) {
     try {
       const utl = candidate.public_utl as PublicUTL
       const result = computeScore(utl, jobProfile)
-
       if (result.total_score >= SCORE_THRESHOLD && !result.exclusion_reason) {
-        await createOpportunity({
-          candidateId: candidate.id,
-          jobId,
-          companyId,
-          score: result.total_score,
-          jobProfile,
-        })
+        scored.push({ candidateId: candidate.id, score: result.total_score })
       }
     } catch (e) {
       console.error(`[matching] Error scoring candidate ${candidate.id}:`, e)
     }
+  }
+
+  // Rank and take top MAX_OPPORTUNITIES
+  const top = scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_OPPORTUNITIES)
+
+  console.log(`[matching] job=${jobId}: ${candidates.length} candidates scored, ${scored.length} qualify, selecting top ${top.length}`)
+
+  for (const { candidateId, score } of top) {
+    await createOpportunity({ candidateId, jobId, companyId, score, jobProfile })
   }
 }
 
@@ -153,7 +160,21 @@ export async function matchJobsToTalent(candidateId: string): Promise<void> {
       const jobProfile = job.utl_job_profile as UTLJobProfile
       const result = computeScore(utl, jobProfile)
 
-      if (result.total_score >= SCORE_THRESHOLD && !result.exclusion_reason) {
+      if (result.total_score < SCORE_THRESHOLD || result.exclusion_reason) continue
+
+      // Check if this candidate would rank in the top MAX_OPPORTUNITIES for this job
+      const { data: existingOps } = await service
+        .from("talent_opportunities")
+        .select("score")
+        .eq("job_id", job.id)
+        .order("score", { ascending: false })
+        .limit(MAX_OPPORTUNITIES)
+
+      const count = existingOps?.length ?? 0
+      const lowestTop = existingOps?.[count - 1]?.score ?? 0
+
+      // Slot available OR new candidate beats the lowest in current top-5
+      if (count < MAX_OPPORTUNITIES || result.total_score > lowestTop) {
         await createOpportunity({
           candidateId,
           jobId: job.id,
