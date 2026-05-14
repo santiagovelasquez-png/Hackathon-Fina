@@ -4,7 +4,7 @@ import type { AIExtractionOutput, InterviewEvaluation } from "@/lib/utl/schema"
 import { AIExtractionOutputSchema } from "@/lib/utl/schema"
 
 // Gemini 2.5 Pro: complex extraction (UTL from CV text or PDF bytes)
-const EXTRACTION_MODEL = "gemini-2.5-pro-preview-05-06"
+const EXTRACTION_MODEL = "gemini-2.5-pro-preview-03-25"
 // Gemini 2.0 Flash: fast tasks (evaluation, summarize, question selection)
 const FLASH_MODEL = "gemini-2.0-flash-001"
 
