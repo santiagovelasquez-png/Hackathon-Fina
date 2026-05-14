@@ -47,32 +47,24 @@ export function computeScore(utl: PublicUTL, job: UTLJobProfile): CandidateScore
 }
 
 function checkHardExclusions(utl: PublicUTL, job: UTLJobProfile): string | null {
-  // Experience hard filter
-  if (job.min_experience_months > 0) {
-    const ratio = utl.total_experience_months / job.min_experience_months
-    if (ratio < 0.25) {
-      return `Insufficient experience: ${utl.total_experience_months} months vs ${job.min_experience_months} months required (below 25% threshold)`
-    }
-  }
-
-  // Location hard filter (if job is not remote_ok and candidate is remote-only)
-  if (!job.location.remote_ok && job.location.country) {
-    if (utl.location.remote && !utl.location.country) {
-      return `Location mismatch: job requires presence in ${job.location.country}, candidate listed as remote-only with no country`
-    }
-    if (utl.location.country && utl.location.country !== job.location.country) {
+  // Location hard filter — only exclude if job is explicitly onsite in a country
+  // and candidate has a DIFFERENT confirmed country (not just remote preference)
+  if (!job.location.remote_ok && job.location.country && utl.location.country) {
+    if (utl.location.country !== job.location.country) {
       return `Location mismatch: job requires ${job.location.country}, candidate is in ${utl.location.country}`
     }
   }
 
-  // Required skills hard filter — if all required:true skills are missing
-  if (job.required_skills.length > 0) {
-    const candidateSkills = new Set(utl.skills.map((s) => s.name.toLowerCase()))
-    const hardRequired = job.required_skills.filter((s) => s.required)
-    const missingHard = hardRequired.filter((s) => !candidateSkills.has(s.name.toLowerCase()))
-
-    if (hardRequired.length > 0 && missingHard.length === hardRequired.length) {
-      return `Missing all required skills: ${missingHard.map((s) => s.name).join(", ")}`
+  // Skills hard filter — only exclude if candidate has ZERO fuzzy overlap with
+  // any required skill (even optional ones). Avoids excluding partial matches.
+  if (job.required_skills.length > 0 && utl.skills.length > 0) {
+    const candidateSkills = utl.skills.map((s) => s.name.toLowerCase())
+    const anyMatch = job.required_skills.some((req) => {
+      const r = req.name.toLowerCase()
+      return candidateSkills.some((c) => c === r || c.includes(r) || r.includes(c))
+    })
+    if (!anyMatch) {
+      return `No skill overlap: candidate skills [${candidateSkills.slice(0, 3).join(", ")}...] vs job requires [${job.required_skills.slice(0, 3).map((s) => s.name).join(", ")}...]`
     }
   }
 

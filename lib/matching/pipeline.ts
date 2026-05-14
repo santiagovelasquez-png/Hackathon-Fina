@@ -7,7 +7,11 @@ const SCORE_THRESHOLD = 4.0
 const MAX_OPPORTUNITIES = 5
 
 function buildTelegramUrl(rawToken: string): string {
-  const username = process.env.TELEGRAM_BOT_USERNAME ?? ""
+  const raw = process.env.TELEGRAM_BOT_USERNAME ?? ""
+  const username = raw.replace(/^@/, "").trim() // strip leading @ if present
+  if (!username) {
+    console.error("[matching] TELEGRAM_BOT_USERNAME is not set — deep link will be invalid. Set it in Vercel env vars (e.g. OpenScouting_Bot)")
+  }
   return `https://t.me/${username}?start=${rawToken}`
 }
 
