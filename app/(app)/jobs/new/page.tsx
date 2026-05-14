@@ -61,11 +61,14 @@ export default function NewJobPage() {
     title: string; description: string
     required_skills: Skill[]; competencies: Competency[]; min_experience_months: number
   }) {
-    if (data.title) setTitle(data.title)
-    if (data.description) setDescription(data.description)
-    if (data.required_skills?.length) setSkills(data.required_skills.filter((s) => s.name))
-    if (data.competencies?.length) setCompetencies(data.competencies.filter((c) => c.name))
-    if (data.min_experience_months) setMinExperience(data.min_experience_months)
+    // Always overwrite — no conditional guards (empty data should still clear stale state)
+    setTitle(data.title ?? "")
+    setDescription(data.description ?? "")
+    const cleanSkills = (data.required_skills ?? []).filter((s) => s.name?.trim())
+    setSkills(cleanSkills.length > 0 ? cleanSkills : [{ name: "", required: true }])
+    const cleanComps = (data.competencies ?? []).filter((c) => c.name?.trim())
+    setCompetencies(cleanComps.length > 0 ? cleanComps : [{ name: "problem_solving", minimum_score: 6 }])
+    setMinExperience(data.min_experience_months ?? 0)
     setParsedOk(true)
     setMode("form")
   }

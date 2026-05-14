@@ -163,40 +163,82 @@ export interface ParsedJobProfile {
   min_experience_months: number
 }
 
-const JOB_PARSE_SCHEMA = `Return ONLY valid JSON:
+const JOB_PARSE_SCHEMA = `Return ONLY valid JSON with this exact structure:
 {
-  "title": string,
-  "description": string (2-4 sentences summarizing the role),
+  "title": string (job title, e.g. "Backend Engineer"),
+  "description": string (2-4 sentences summarizing the role and responsibilities),
   "required_skills": [{ "name": string, "required": boolean }],
-  "competencies": [{ "name": string (snake_case, e.g. problem_solving), "minimum_score": number (1-10) }],
-  "min_experience_months": number
+  "competencies": [{ "name": string (snake_case, e.g. "problem_solving"), "minimum_score": number (1-10) }],
+  "min_experience_months": number (0 if not specified)
 }`
+
+const JOB_PARSE_SYSTEM = `You are an expert HR analyst. Extract a structured job profile from ANY input — formal job descriptions, PDFs, voice transcripts, bullet lists, or informal notes in Spanish or English.
+
+CRITICAL RULES:
+- title: infer the most specific job title from the content. NEVER leave empty.
+- description: synthesize a clear 2-4 sentence role description. If input is brief, expand sensibly.
+- required_skills: extract ALL technologies, tools, frameworks, languages mentioned. Also infer obvious skills from context (e.g. "backend" → add "REST APIs", "databases"). Mark first 3 as required:true.
+- competencies: infer 2-4 competencies from the role context. For engineering: problem_solving, collaboration. For leadership: leadership, communication. Etc.
+- min_experience_months: if input says "2 años" → 24, "junior" → 6, "senior" → 48, not specified → 0.
+- Input may be a voice transcript and sound informal — extract the intent, not the literal words.
+
+${JOB_PARSE_SCHEMA}`
+
+function buildJobProfile(raw: Record<string, unknown>): ParsedJobProfile {
+  return {
+    title: String(raw.title || "").trim() || "Cargo sin título",
+    description: String(raw.description || "").trim(),
+    required_skills: Array.isArray(raw.required_skills)
+      ? raw.required_skills
+          .map((s: { name?: string; required?: boolean }) => ({
+            name: String(s.name ?? "").trim(),
+            required: Boolean(s.required ?? true),
+          }))
+          .filter((s) => s.name.length > 0)
+      : [],
+    competencies: Array.isArray(raw.competencies)
+      ? raw.competencies
+          .map((c: { name?: string; minimum_score?: number }) => ({
+            name: String(c.name ?? "").trim(),
+            minimum_score: Math.max(1, Math.min(10, Number(c.minimum_score) || 6)),
+          }))
+          .filter((c) => c.name.length > 0)
+      : [],
+    min_experience_months: Math.max(0, Number(raw.min_experience_months) || 0),
+  }
+}
 
 async function runJobParse(parts: Part[]): Promise<ParsedJobProfile> {
   const genAI = createClient()
   const model = genAI.getGenerativeModel({
     model: FLASH_MODEL,
-    systemInstruction: `You are an expert HR analyst. Extract a structured job profile from the provided content. ${JOB_PARSE_SCHEMA}`,
+    systemInstruction: JOB_PARSE_SYSTEM,
     generationConfig: { responseMimeType: "application/json", temperature: 0.1, maxOutputTokens: 1024 },
   })
 
   const result = await model.generateContent(parts as never)
+  const raw = result.response.text()
 
   try {
-    const raw = JSON.parse(result.response.text())
-    return {
-      title: String(raw.title || "Untitled role"),
-      description: String(raw.description || ""),
-      required_skills: Array.isArray(raw.required_skills)
-        ? raw.required_skills.map((s: { name?: string; required?: boolean }) => ({ name: String(s.name ?? ""), required: Boolean(s.required ?? true) }))
-        : [],
-      competencies: Array.isArray(raw.competencies)
-        ? raw.competencies.map((c: { name?: string; minimum_score?: number }) => ({ name: String(c.name ?? ""), minimum_score: Math.max(1, Math.min(10, Number(c.minimum_score) || 6)) }))
-        : [],
-      min_experience_months: Math.max(0, Number(raw.min_experience_months) || 0),
-    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const profile = buildJobProfile(parsed)
+    // If title is still placeholder, try repair
+    if (profile.title === "Cargo sin título" && raw.length > 10) throw new Error("bad title")
+    return profile
   } catch {
-    return { title: "", description: "", required_skills: [], competencies: [], min_experience_months: 0 }
+    // Repair pass
+    try {
+      const flashModel = genAI.getGenerativeModel({
+        model: FLASH_MODEL,
+        systemInstruction: `Fix this JSON to match the schema and fill any missing fields with sensible defaults. ${JOB_PARSE_SCHEMA} Return only valid JSON.`,
+        generationConfig: { responseMimeType: "application/json", temperature: 0 },
+      })
+      const repair = await flashModel.generateContent([{ text: raw || "empty" }])
+      const repaired = JSON.parse(repair.response.text()) as Record<string, unknown>
+      return buildJobProfile(repaired)
+    } catch {
+      return { title: "Cargo sin título", description: "", required_skills: [], competencies: [], min_experience_months: 0 }
+    }
   }
 }
 
