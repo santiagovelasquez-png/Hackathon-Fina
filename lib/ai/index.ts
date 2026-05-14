@@ -2,7 +2,7 @@ import type { AIProvider } from "./provider"
 import { mockProvider } from "./mock-provider"
 
 function hasGemini() {
-  return !!(process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_SERVICE_ACCOUNT_KEY)
+  return !!(process.env.GEMINI_API_KEY)
 }
 
 async function getGeminiProvider(): Promise<AIProvider> {
