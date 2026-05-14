@@ -140,7 +140,7 @@ export function scoreCompetencies(utl: PublicUTL, job: UTLJobProfile): ScoreDime
 
   for (const comp of job.competencies) {
     const key = comp.name.toLowerCase()
-    const evidenceScore = evidenceByCompetency.get(key) ?? 1
+    const evidenceScore = evidenceByCompetency.get(key) ?? 5
     const weight = comp.weight
 
     weightedScore += evidenceScore * weight

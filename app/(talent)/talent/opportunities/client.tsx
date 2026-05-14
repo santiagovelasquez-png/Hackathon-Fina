@@ -3,7 +3,17 @@
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
-import { Star, MessageCircle, CheckCircle, Clock, ExternalLink, RefreshCw } from "lucide-react"
+import { Star, MessageCircle, CheckCircle, Clock, ExternalLink, RefreshCw, Calendar } from "lucide-react"
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return mins <= 1 ? "Hace un momento" : `Hace ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `Hace ${hrs} hora${hrs !== 1 ? "s" : ""}`
+  const days = Math.floor(hrs / 24)
+  return `Hace ${days} día${days !== 1 ? "s" : ""}`
+}
 
 interface Opportunity {
   id: string
@@ -182,6 +192,10 @@ export default function OpportunitiesClient({
                                 {Math.round((profile?.min_experience_months ?? 0) / 12)}+ años exp.
                               </span>
                             )}
+                            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                              <Calendar size={10} />
+                              {timeAgo(opp.created_at)}
+                            </span>
                           </div>
                         </div>
                       </div>

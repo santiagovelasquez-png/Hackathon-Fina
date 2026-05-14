@@ -3,7 +3,7 @@ import { createServiceClient } from "@/lib/supabase/server"
 import { computeScore } from "@/lib/scoring/engine"
 import type { PublicUTL, UTLJobProfile } from "@/lib/utl/schema"
 
-const SCORE_THRESHOLD = 4.0
+const SCORE_THRESHOLD = 3.0
 const MAX_OPPORTUNITIES = 5
 
 function buildTelegramUrl(rawToken: string): string {

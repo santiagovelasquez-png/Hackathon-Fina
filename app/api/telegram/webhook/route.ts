@@ -254,8 +254,16 @@ async function handleAnswer(chatId: number, text: string): Promise<void> {
     // Update opportunity to completed
     await service.from("talent_opportunities").update({ status: "completed" }).eq("session_id", session.id)
 
-    // Rescore
-    await rescoreAfterInterview(session.id, session.candidate_id, session.job_id, newState, evidence)
+    // Rescore + send top-3 report to recruiter
+    const companyId = await rescoreAfterInterview(session.id, session.candidate_id, session.job_id, newState, evidence)
+    if (companyId) {
+      try {
+        const { sendTopCandidatesReport } = await import("@/lib/email/report")
+        await sendTopCandidatesReport({ jobId: session.job_id, companyId, jobTitle })
+      } catch (e) {
+        console.error("[webhook] email report failed:", e)
+      }
+    }
 
     await sendCompletion(chatId, name, jobTitle)
   } else {
@@ -290,17 +298,17 @@ async function rescoreAfterInterview(
   jobId: string,
   state: InterviewState,
   lastEvidence: CompetencyEvidence
-) {
+): Promise<string | null> {
   const service = createServiceClient()
   const [{ data: candidateRow }, { data: jobRow }] = await Promise.all([
     service.from("candidates").select("id, public_utl").eq("id", candidateId).single(),
     service.from("jobs").select("id, company_id, utl_job_profile").eq("id", jobId).single(),
   ])
-  if (!candidateRow || !jobRow) return
+  if (!candidateRow || !jobRow) return null
 
   const utlParse = PublicUTLSchema.safeParse(candidateRow.public_utl)
   const jobParse = UTLJobProfileSchema.safeParse(jobRow.utl_job_profile)
-  if (!utlParse.success || !jobParse.success) return
+  if (!utlParse.success || !jobParse.success) return null
 
   const interviewAnswers = buildInterviewAnswersForUTL(state)
   const updatedUTL = {
@@ -339,6 +347,8 @@ async function rescoreAfterInterview(
       pii_unlocked: false,
     }, { onConflict: "job_id,candidate_id" }),
   ])
+
+  return jobRow.company_id
 }
 
 export async function POST(request: NextRequest) {
