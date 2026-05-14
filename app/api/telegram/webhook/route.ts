@@ -91,6 +91,72 @@ async function handleStart(chatId: number, token: string): Promise<void> {
   await sendQuestion(chatId, firstQ.question_text, session.current_question_index, TOTAL_QUESTIONS)
 }
 
+// Called when user shares their phone number (contact button).
+// Looks up candidate by phone → finds pending session → starts interview.
+async function handleContact(chatId: number, phone: string, firstName: string): Promise<void> {
+  const service = createServiceClient()
+
+  // Normalize: strip non-digits, compare last 9 digits (avoids country code mismatches)
+  const digits = phone.replace(/\D/g, "")
+  const tail = digits.slice(-9)
+
+  const { data: rows } = await service
+    .from("candidate_private_data")
+    .select("candidate_id, full_name, phone")
+
+  if (!rows || rows.length === 0) {
+    await sendMessage(chatId, `Hola ${firstName}. No encontré tu perfil. Asegúrate de haber subido tu CV en la plataforma y de usar el link de la oportunidad.`)
+    return
+  }
+
+  // Find matching candidate by phone tail
+  const match = rows.find((r) => {
+    const stored = (r.phone ?? "").replace(/\D/g, "")
+    return stored.length >= 7 && stored.endsWith(tail)
+  })
+
+  if (!match) {
+    await sendMessage(chatId, `No encontré tu perfil con ese número. Usa el link directo de tu oportunidad en la plataforma OpenScout AI.`)
+    return
+  }
+
+  // Find most recent pending session for this candidate
+  const { data: session } = await service
+    .from("interview_sessions")
+    .select("*")
+    .eq("candidate_id", match.candidate_id)
+    .in("status", ["pending", "in_progress"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single()
+
+  if (!session) {
+    await sendMessage(chatId, `Hola ${match.full_name ?? firstName}! No tienes entrevistas pendientes en este momento. Las oportunidades aparecen en tu dashboard de OpenScout AI.`)
+    return
+  }
+
+  // Link this chat_id to the session and start
+  await service.from("interview_sessions").update({
+    telegram_chat_id: String(chatId),
+    channel: "telegram",
+    ...(session.status === "pending" ? { status: "in_progress", started_at: new Date().toISOString() } : {}),
+  }).eq("id", session.id)
+
+  await service.from("talent_opportunities").update({ status: "interviewing" }).eq("session_id", session.id)
+
+  const { data: job } = await service.from("jobs").select("utl_job_profile").eq("id", session.job_id).single()
+  const jobTitle = (job?.utl_job_profile as { title?: string })?.title ?? "la posición"
+
+  await sendMessage(
+    chatId,
+    `¡Hola ${match.full_name ?? firstName}! 👋\n\nTe encontré en la plataforma. Vamos a iniciar tu entrevista para *${jobTitle}*.\n\nTe haré ${TOTAL_QUESTIONS} preguntas. Responde con detalle.\n\n¡Empezamos!`
+  )
+
+  const questions = getSessionQuestions(session.answers)
+  const firstQ = questions[session.current_question_index] ?? questions[0]
+  await sendQuestion(chatId, firstQ.question_text, session.current_question_index, TOTAL_QUESTIONS)
+}
+
 async function handleAnswer(chatId: number, text: string): Promise<void> {
   const service = createServiceClient()
 
@@ -104,7 +170,14 @@ async function handleAnswer(chatId: number, text: string): Promise<void> {
     .single()
 
   if (!session) {
-    await sendMessage(chatId, "No tengo una entrevista activa para ti. Si crees que es un error, abre tu link de entrevista nuevamente.")
+    // No session linked to this chat — ask them to use the link or share phone
+    await sendMessage(
+      chatId,
+      "No tengo una entrevista activa para ti.\n\n*Opciones:*\n1️⃣ Abre el link de tu oportunidad en OpenScout AI (recomendado)\n2️⃣ Comparte tu número de teléfono para buscar tu perfil",
+      "Markdown"
+    )
+    // Send contact request keyboard
+    await sendContactRequest(chatId)
     return
   }
 
@@ -193,6 +266,24 @@ async function handleAnswer(chatId: number, text: string): Promise<void> {
   }
 }
 
+async function sendContactRequest(chatId: number): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN
+  if (!token) return
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: "Toca el botón para compartir tu número y buscarte en la plataforma:",
+      reply_markup: {
+        keyboard: [[{ text: "📱 Compartir mi número", request_contact: true }]],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    }),
+  })
+}
+
 async function rescoreAfterInterview(
   _sessionId: string,
   candidateId: string,
@@ -254,22 +345,42 @@ export async function POST(request: NextRequest) {
   // Always return 200 immediately — Telegram retries on non-200
   try {
     const body = await request.json()
+    console.log("[telegram/webhook] update:", JSON.stringify(body).slice(0, 300))
+
     const message = body?.message
-    if (!message?.text || !message?.chat?.id) {
+    if (!message?.chat?.id) {
       return NextResponse.json({ ok: true })
     }
 
     const chatId: number = message.chat.id
-    const text: string = message.text.trim()
+
+    // Handle phone number sharing (contact button)
+    if (message.contact) {
+      const phone: string = message.contact.phone_number ?? ""
+      const firstName: string = message.contact.first_name ?? message.from?.first_name ?? "usuario"
+      console.log(`[telegram/webhook] contact from chatId=${chatId} phone=${phone}`)
+      await handleContact(chatId, phone, firstName)
+      return NextResponse.json({ ok: true })
+    }
+
+    const text: string = (message.text ?? "").trim()
+    if (!text) return NextResponse.json({ ok: true })
 
     if (text.startsWith("/start")) {
       const token = text.replace("/start", "").trim()
       if (token) {
+        console.log(`[telegram/webhook] /start with token, chatId=${chatId}`)
         await handleStart(chatId, token)
       } else {
-        await sendMessage(chatId, "Hola 👋 Para iniciar tu entrevista, abre el link que te enviaron.")
+        await sendMessage(
+          chatId,
+          "¡Hola! 👋 Para iniciar tu entrevista, abre el *link de la oportunidad* desde tu dashboard en OpenScout AI.\n\nSi no tienes el link, también puedes compartir tu número de teléfono.",
+          "Markdown"
+        )
+        await sendContactRequest(chatId)
       }
     } else if (!text.startsWith("/")) {
+      console.log(`[telegram/webhook] answer from chatId=${chatId}, length=${text.length}`)
       await handleAnswer(chatId, text)
     }
   } catch (e) {
