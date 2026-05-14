@@ -7,8 +7,8 @@ export async function selectQuestions(job: UTLJobProfile): Promise<Question[]> {
     (q) => `${q.id}: [${q.competency_name}] ${q.question_text} (tags: ${q.tags.join(", ")})`
   ).join("\n")
 
-  // Priority: Gemini Flash → Groq → deterministic
-  if (process.env.GOOGLE_CLOUD_PROJECT && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+  // Priority: Gemini Flash → deterministic
+  if (process.env.GEMINI_API_KEY) {
     try {
       const { selectQuestionsWithGemini } = await import("@/lib/ai/gemini-provider")
       const ids = await selectQuestionsWithGemini(jobSummary, questionList, DEFAULT_QUESTION_COUNT)
@@ -16,16 +16,6 @@ export async function selectQuestions(job: UTLJobProfile): Promise<Question[]> {
       if (selected.length >= DEFAULT_QUESTION_COUNT) return selected
     } catch (err) {
       console.warn("[interview] Gemini question selection failed, falling back", err)
-    }
-  }
-
-  if (process.env.GROQ_API_KEY) {
-    try {
-      const ids = await selectWithGroq(jobSummary, questionList)
-      const selected = resolveIds(ids)
-      if (selected.length >= DEFAULT_QUESTION_COUNT) return selected
-    } catch (err) {
-      console.warn("[interview] Groq question selection failed, falling back", err)
     }
   }
 

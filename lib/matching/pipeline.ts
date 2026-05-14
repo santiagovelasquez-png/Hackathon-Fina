@@ -91,22 +91,37 @@ export async function matchTalentsToJob(jobId: string, companyId: string): Promi
   if (!job) return
   const jobProfile = job.utl_job_profile as UTLJobProfile
 
-  // Pre-filter by skill overlap using GIN index on skills_tags
+  // Try skills_tags GIN pre-filter; fall back to full scan if column missing
   const requiredTags = (jobProfile.required_skills ?? [])
     .filter((s) => s.required)
     .map((s) => s.name.toLowerCase())
 
-  let query = service
-    .from("candidates")
-    .select("id, public_utl")
-    .not("user_id", "is", null)
+  let candidates: Array<{ id: string; public_utl: unknown }> | null = null
 
   if (requiredTags.length > 0) {
-    query = query.overlaps("skills_tags", requiredTags)
+    const { data, error } = await service
+      .from("candidates")
+      .select("id, public_utl")
+      .not("user_id", "is", null)
+      .overlaps("skills_tags", requiredTags)
+
+    if (!error) {
+      candidates = data
+    } else {
+      console.warn("[matching] skills_tags filter failed (column missing?), falling back to full scan:", error.message)
+    }
   }
 
-  const { data: candidates } = await query
+  // Full scan fallback
+  if (candidates === null) {
+    const { data } = await service
+      .from("candidates")
+      .select("id, public_utl")
+      .not("user_id", "is", null)
+    candidates = data
+  }
 
+  console.log(`[matching] job=${jobId}: ${candidates?.length ?? 0} candidates to score`)
   if (!candidates || candidates.length === 0) return
 
   // Score all qualifying candidates
@@ -131,7 +146,12 @@ export async function matchTalentsToJob(jobId: string, companyId: string): Promi
   console.log(`[matching] job=${jobId}: ${candidates.length} candidates scored, ${scored.length} qualify, selecting top ${top.length}`)
 
   for (const { candidateId, score } of top) {
-    await createOpportunity({ candidateId, jobId, companyId, score, jobProfile })
+    try {
+      await createOpportunity({ candidateId, jobId, companyId, score, jobProfile })
+      console.log(`[matching] opportunity created: candidate=${candidateId} score=${score}`)
+    } catch (e) {
+      console.error(`[matching] failed to create opportunity for candidate=${candidateId}:`, e)
+    }
   }
 }
 
