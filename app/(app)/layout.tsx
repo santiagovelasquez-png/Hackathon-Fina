@@ -32,6 +32,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
+  // Talent users have their own dashboard
+  const service2 = createServiceClient()
+  const { data: profile } = await service2.from("profiles").select("user_type").eq("id", user.id).single()
+  if (profile?.user_type === "talent") redirect("/talent/dashboard")
+
   const { onboardingCompleted } = await ensureCompany(user.id, user.email ?? "user")
   if (!onboardingCompleted) redirect("/onboarding")
 

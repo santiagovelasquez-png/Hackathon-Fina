@@ -1,7 +1,7 @@
 import { createClient, createServiceClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import Link from "next/link"
-import { Briefcase, Plus, ChevronRight, Clock, Users } from "lucide-react"
+import { Briefcase, Plus, ChevronRight, Clock, Users, MessageCircle, CheckCircle } from "lucide-react"
 import type { UTLJobProfile } from "@/lib/utl/schema"
 
 export default async function JobsPage() {
@@ -17,6 +17,21 @@ export default async function JobsPage() {
     ? await service.from("jobs").select("id, status, created_at, utl_job_profile")
         .eq("company_id", membership.company_id).order("created_at", { ascending: false })
     : { data: [] }
+
+  // Opportunity stats per job
+  const jobIds = jobs?.map((j) => j.id) ?? []
+  const { data: oppStats } = jobIds.length > 0
+    ? await service.from("talent_opportunities").select("job_id, status").in("job_id", jobIds)
+    : { data: [] }
+
+  const statsByJob = new Map<string, { interviewing: number; completed: number; pending: number }>()
+  for (const opp of oppStats ?? []) {
+    const cur = statsByJob.get(opp.job_id) ?? { interviewing: 0, completed: 0, pending: 0 }
+    if (opp.status === "interviewing") cur.interviewing++
+    else if (opp.status === "completed") cur.completed++
+    else if (opp.status === "pending") cur.pending++
+    statsByJob.set(opp.job_id, cur)
+  }
 
   const statusConfig = (s: string) =>
     s === "active"
@@ -67,6 +82,8 @@ export default async function JobsPage() {
                 ? `${Math.round(expMonths / 12)} año${Math.round(expMonths / 12) !== 1 ? "s" : ""}`
                 : expMonths > 0 ? `${expMonths}m` : "Sin mínimo"
               const status = statusConfig(job.status)
+              const stats = statsByJob.get(job.id)
+              const totalOpps = (stats?.pending ?? 0) + (stats?.interviewing ?? 0) + (stats?.completed ?? 0)
 
               return (
                 <Link key={job.id} href={`/ranking/${job.id}`}
@@ -88,6 +105,26 @@ export default async function JobsPage() {
                       </span>
                     </div>
                   </div>
+                  {/* Seguimiento badges */}
+                  {totalOpps > 0 && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {(stats?.interviewing ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">
+                          <MessageCircle size={10} /> {stats!.interviewing} entrevistando
+                        </span>
+                      )}
+                      {(stats?.completed ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                          <CheckCircle size={10} /> {stats!.completed} completados
+                        </span>
+                      )}
+                      {(stats?.pending ?? 0) > 0 && (stats?.interviewing ?? 0) === 0 && (stats?.completed ?? 0) === 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-violet-100 text-violet-700 border border-violet-200">
+                          {stats!.pending} candidatos
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${status.cls}`}>{status.label}</span>
                   <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all shrink-0" />
                 </Link>

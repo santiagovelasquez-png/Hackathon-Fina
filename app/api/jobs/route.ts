@@ -83,6 +83,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to create job", details: error?.message }, { status: 500 })
   }
 
+  // Fire-and-forget: match existing talent pool against new job
+  import("@/lib/matching/pipeline").then(({ matchTalentsToJob }) =>
+    matchTalentsToJob(job.id, membership.company_id).catch((e) => console.error("[jobs] matching failed:", e))
+  )
+
   return NextResponse.json({ job_id: job.id })
 }
 

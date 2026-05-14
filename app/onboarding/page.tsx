@@ -27,11 +27,11 @@ const ROLE_SUGGESTIONS = [
   "Ventas", "Customer Success", "Operaciones", "Finanzas", "RRHH",
 ]
 
-type Step = 1 | 2 | 3
+type Step = 0 | 1 | 2 | 3
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const [step, setStep] = useState<Step>(1)
+  const [step, setStep] = useState<Step>(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -78,6 +78,22 @@ export default function OnboardingPage() {
 
   const progressPct = step === 1 ? 33 : step === 2 ? 66 : 100
 
+  async function handleTalent() {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/talent/onboarding", { method: "POST" })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error ?? "Error guardando datos")
+      }
+      router.push("/talent/cv")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error desconocido")
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0F172A] via-[#1e3a5f] to-[#0369A1] flex items-center justify-center p-6">
       <div className="w-full max-w-lg">
@@ -93,19 +109,61 @@ export default function OnboardingPage() {
         {/* Card */}
         <div className="bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl shadow-black/20 p-8 border border-white/60">
 
-          {/* Progress */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Configuración inicial</p>
-              <p className="text-xs text-slate-400">Paso {step} de 3</p>
+          {/* Step 0: User type */}
+          {step === 0 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900 mb-1">¿Cómo usarás OpenScout AI?</h2>
+                <p className="text-sm text-slate-500">Selecciona tu perfil para personalizar tu experiencia.</p>
+              </div>
+              {error && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="flex flex-col items-center gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-6 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-200 cursor-pointer group"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                    <Building2 size={26} className="text-blue-600" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-bold text-slate-900 text-sm">Soy una empresa</p>
+                    <p className="text-xs text-slate-500 mt-1">Busco talento para mi equipo</p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTalent}
+                  disabled={loading}
+                  className="flex flex-col items-center gap-4 rounded-2xl border-2 border-slate-200 bg-slate-50 p-6 hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-200 cursor-pointer group disabled:opacity-60"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-violet-100 flex items-center justify-center group-hover:bg-violet-200 transition-colors">
+                    {loading ? <Loader2 size={26} className="text-violet-600 animate-spin" /> : <Users size={26} className="text-violet-600" />}
+                  </div>
+                  <div className="text-center">
+                    <p className="font-bold text-slate-900 text-sm">Soy un profesional</p>
+                    <p className="text-xs text-slate-500 mt-1">Busco oportunidades laborales</p>
+                  </div>
+                </button>
+              </div>
             </div>
-            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-blue-700 rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
-              />
+          )}
+
+          {/* Progress (steps 1-3 only) */}
+          {step > 0 && (
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Configuración inicial</p>
+                <p className="text-xs text-slate-400">Paso {step} de 3</p>
+              </div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-500 to-blue-700 rounded-full transition-all duration-500"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Step 1: Empresa */}
           {step === 1 && (
