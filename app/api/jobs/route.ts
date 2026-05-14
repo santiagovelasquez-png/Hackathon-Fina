@@ -8,12 +8,12 @@ const CreateJobBody = z.object({
   description: z.string().min(1),
   required_skills: z.array(z.object({
     name: z.string(),
-    weight: z.number().min(0).max(1),
+    weight: z.number().min(0).max(1).optional(),
     required: z.boolean(),
   })).default([]),
   competencies: z.array(z.object({
     name: z.string(),
-    weight: z.number().min(0).max(1),
+    weight: z.number().min(0).max(1).optional(),
     minimum_score: z.number().min(1).max(10),
   })).default([]),
   min_experience_months: z.number().int().nonnegative().default(0),
@@ -49,8 +49,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request body", details: String(err) }, { status: 400 })
   }
 
+  // Auto-assign equal weights if not provided
+  const skillCount = body.required_skills.length || 1
+  const compCount = body.competencies.length || 1
+  const weightedSkills = body.required_skills.map((s) => ({
+    ...s,
+    weight: s.weight ?? parseFloat((1 / skillCount).toFixed(3)),
+  }))
+  const weightedComps = body.competencies.map((c) => ({
+    ...c,
+    weight: c.weight ?? parseFloat((1 / compCount).toFixed(3)),
+  }))
+
   const utlJobProfile = UTLJobProfileSchema.parse({
     ...body,
+    required_skills: weightedSkills,
+    competencies: weightedComps,
     salary_is_hard_filter: false,
     status: "active",
   })

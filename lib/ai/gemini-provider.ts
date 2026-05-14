@@ -188,6 +188,62 @@ async function summarize(ctx: SummarizeContext): Promise<string> {
 
 export const geminiProvider: AIProvider = { extractUTL, evaluateAnswer, summarize }
 
+// ── Job profile parsing (Flash — from text or PDF) ────────────────────────────
+
+export interface ParsedJobProfile {
+  title: string
+  description: string
+  required_skills: Array<{ name: string; required: boolean }>
+  competencies: Array<{ name: string; minimum_score: number }>
+  min_experience_months: number
+}
+
+const JOB_PARSE_SCHEMA = `Return ONLY valid JSON:
+{
+  "title": string,
+  "description": string (2-4 sentences summarizing the role),
+  "required_skills": [{ "name": string, "required": boolean }],
+  "competencies": [{ "name": string (snake_case, e.g. problem_solving), "minimum_score": number (1-10) }],
+  "min_experience_months": number
+}`
+
+async function runJobParse(parts: Array<{ text?: string; inlineData?: { data: string; mimeType: string } }>): Promise<ParsedJobProfile> {
+  const vertex = createClient()
+  const model = vertex.getGenerativeModel({
+    model: FLASH_MODEL,
+    generationConfig: { responseMimeType: "application/json", temperature: 0.1, maxOutputTokens: 1024 },
+  })
+
+  const result = await model.generateContent({
+    systemInstruction: `You are an expert HR analyst. Extract a structured job profile from the provided content. ${JOB_PARSE_SCHEMA}`,
+    contents: [{ role: "user", parts: parts as never }],
+  })
+
+  try {
+    const raw = JSON.parse(result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}")
+    return {
+      title: String(raw.title || "Untitled role"),
+      description: String(raw.description || ""),
+      required_skills: Array.isArray(raw.required_skills) ? raw.required_skills.map((s: { name?: string; required?: boolean }) => ({ name: String(s.name ?? ""), required: Boolean(s.required ?? true) })) : [],
+      competencies: Array.isArray(raw.competencies) ? raw.competencies.map((c: { name?: string; minimum_score?: number }) => ({ name: String(c.name ?? ""), minimum_score: Math.max(1, Math.min(10, Number(c.minimum_score) || 6)) })) : [],
+      min_experience_months: Math.max(0, Number(raw.min_experience_months) || 0),
+    }
+  } catch {
+    return { title: "", description: "", required_skills: [], competencies: [], min_experience_months: 0 }
+  }
+}
+
+export async function parseJobProfileFromText(text: string): Promise<ParsedJobProfile> {
+  return runJobParse([{ text: `Parse this job description:\n\n${text.slice(0, 20000)}` }])
+}
+
+export async function parseJobProfileFromPDF(buffer: Buffer): Promise<ParsedJobProfile> {
+  return runJobParse([
+    { inlineData: { data: buffer.toString("base64"), mimeType: "application/pdf" } },
+    { text: "Extract a structured job profile from this document." },
+  ])
+}
+
 // ── Question selection (Flash — fast + cheap) ─────────────────────────────────
 
 export async function selectQuestionsWithGemini(
