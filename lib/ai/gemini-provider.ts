@@ -4,9 +4,9 @@ import type { AIExtractionOutput, InterviewEvaluation } from "@/lib/utl/schema"
 import { AIExtractionOutputSchema } from "@/lib/utl/schema"
 
 // Gemini 2.5 Pro: complex extraction (UTL from CV text or PDF bytes)
-const EXTRACTION_MODEL = "gemini-2.5-pro-preview-03-25"
-// Gemini 2.0 Flash: fast tasks (evaluation, summarize, question selection)
-const FLASH_MODEL = "gemini-2.0-flash-001"
+const EXTRACTION_MODEL = "gemini-1.5-pro-002"
+// Flash: fast tasks (evaluation, summarize, question selection)
+const FLASH_MODEL = "gemini-1.5-flash-002"
 
 const EXTRACTION_SCHEMA_DESC = `Return ONLY a valid JSON object with this exact structure:
 {
