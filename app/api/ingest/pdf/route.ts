@@ -1,20 +1,53 @@
 import { NextRequest, NextResponse } from "next/server"
 import { extractTextFromPDF } from "@/lib/adapters/pdf"
-import { getAIProvider } from "@/lib/ai"
+import { getAIProvider, hasGemini } from "@/lib/ai"
 import { validatePublicUTL } from "@/lib/utl/validator"
 import { normalizePublicUTL } from "@/lib/utl/normalizer"
 import { createClient, createServiceClient } from "@/lib/supabase/server"
 import { logAuditEvent } from "@/lib/audit/logger"
-import type { PublicUTL, PrivateUTL } from "@/lib/utl/schema"
+import type { PublicUTL, PrivateUTL, AIExtractionOutput } from "@/lib/utl/schema"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
 
+async function extractWithBestMethod(buffer: Buffer): Promise<{ aiDraft: AIExtractionOutput; adapterUsed: string; rawText: string }> {
+  // Gemini 2.5 Pro: native PDF understanding — handles image-based PDFs,
+  // multi-column layouts, tables better than pdf-parse + text model
+  if (hasGemini()) {
+    try {
+      const { extractUTLFromPDFBytes } = await import("@/lib/ai/gemini-provider")
+      const aiDraft = await extractUTLFromPDFBytes(buffer)
+
+      // Still extract text for normalized_inputs record (for audit/debug)
+      let rawText = ""
+      try { rawText = await extractTextFromPDF(buffer) } catch { /* best-effort */ }
+
+      return { aiDraft, adapterUsed: "gemini_native_pdf", rawText }
+    } catch (err) {
+      console.warn("[ingest] Gemini native PDF failed, falling back to text extraction", err)
+    }
+  }
+
+  // Fallback: pdf-parse → text → AI
+  let rawText: string
+  try {
+    rawText = await extractTextFromPDF(buffer)
+  } catch (err) {
+    throw new Error(`PDF text extraction failed: ${String(err)}`)
+  }
+
+  if (rawText.trim().length < 50) {
+    throw new Error("PDF appears to be empty or image-only (no extractable text)")
+  }
+
+  const ai = await getAIProvider()
+  const aiDraft = await ai.extractUTL(rawText)
+  return { aiDraft, adapterUsed: "pdf_text", rawText }
+}
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
 
   let formData: FormData
   try {
@@ -31,31 +64,16 @@ export async function POST(request: NextRequest) {
   const arrayBuffer = await file.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
 
+  let aiDraft: AIExtractionOutput
+  let adapterUsed: string
   let rawText: string
+
   try {
-    rawText = await extractTextFromPDF(buffer)
+    ;({ aiDraft, adapterUsed, rawText } = await extractWithBestMethod(buffer))
   } catch (err) {
     return NextResponse.json(
-      { error: "Failed to parse PDF", details: String(err) },
+      { error: String(err) },
       { status: 422 }
-    )
-  }
-
-  if (rawText.trim().length < 50) {
-    return NextResponse.json(
-      { error: "PDF appears to be empty or image-only (no extractable text)" },
-      { status: 422 }
-    )
-  }
-
-  const ai = await getAIProvider()
-  let aiDraft: Awaited<ReturnType<typeof ai.extractUTL>>
-  try {
-    aiDraft = await ai.extractUTL(rawText)
-  } catch (err) {
-    return NextResponse.json(
-      { error: "AI extraction failed", details: String(err) },
-      { status: 500 }
     )
   }
 
@@ -128,8 +146,8 @@ export async function POST(request: NextRequest) {
     }),
     service.from("normalized_inputs").insert({
       candidate_id: candidate.id,
-      raw_text: rawText,
-      adapter_used: "pdf",
+      raw_text: rawText || "[native pdf — no text extracted]",
+      adapter_used: adapterUsed,
       ai_draft: aiDraft,
       validation_errors: validation.success ? null : validation.errors,
     }),
@@ -141,6 +159,7 @@ export async function POST(request: NextRequest) {
       resource_id: candidate.id,
       metadata: {
         source_type: "pdf",
+        adapter_used: adapterUsed,
         confidence_score: publicUTL.confidence_score,
         skills_count: publicUTL.skills.length,
         experience_months: publicUTL.total_experience_months,
@@ -151,6 +170,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     candidate_id: candidate.id,
     confidence_score: publicUTL.confidence_score,
+    adapter_used: adapterUsed,
     flags: publicUTL.flags,
     preview: {
       name: privateData.full_name,
