@@ -4,7 +4,7 @@ import { computeScore } from "@/lib/scoring/engine"
 import { selectQuestions } from "@/lib/interview/question-selector"
 import type { PublicUTL, UTLJobProfile } from "@/lib/utl/schema"
 
-const SCORE_THRESHOLD = 6.0
+const SCORE_THRESHOLD = 4.0
 const MAX_OPPORTUNITIES = 5
 
 function buildTelegramUrl(rawToken: string): string {
@@ -91,38 +91,22 @@ export async function matchTalentsToJob(jobId: string, companyId: string): Promi
   if (!job) return
   const jobProfile = job.utl_job_profile as UTLJobProfile
 
-  // Try skills_tags GIN pre-filter; fall back to full scan if column missing
-  const requiredTags = (jobProfile.required_skills ?? [])
-    .filter((s) => s.required)
-    .map((s) => s.name.toLowerCase())
+  // Full scan — pre-filtering by skills_tags is an optimization added later
+  const { data: candidates, error: candidatesError } = await service
+    .from("candidates")
+    .select("id, public_utl")
+    .not("user_id", "is", null)
 
-  let candidates: Array<{ id: string; public_utl: unknown }> | null = null
-
-  if (requiredTags.length > 0) {
-    const { data, error } = await service
-      .from("candidates")
-      .select("id, public_utl")
-      .not("user_id", "is", null)
-      .overlaps("skills_tags", requiredTags)
-
-    if (!error) {
-      candidates = data
-    } else {
-      console.warn("[matching] skills_tags filter failed (column missing?), falling back to full scan:", error.message)
-    }
-  }
-
-  // Full scan fallback
-  if (candidates === null) {
-    const { data } = await service
-      .from("candidates")
-      .select("id, public_utl")
-      .not("user_id", "is", null)
-    candidates = data
+  if (candidatesError) {
+    console.error("[matching] Failed to fetch candidates:", candidatesError.message)
+    return
   }
 
   console.log(`[matching] job=${jobId}: ${candidates?.length ?? 0} candidates to score`)
-  if (!candidates || candidates.length === 0) return
+  if (!candidates || candidates.length === 0) {
+    console.log("[matching] No talent candidates found (user_id IS NOT NULL)")
+    return
+  }
 
   // Score all qualifying candidates
   const scored: Array<{ candidateId: string; score: number }> = []

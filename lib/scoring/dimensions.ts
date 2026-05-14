@@ -28,14 +28,21 @@ export function scoreSkillsMatch(utl: PublicUTL, job: UTLJobProfile): ScoreDimen
     }
   }
 
-  const candidateSkillNames = new Set(utl.skills.map((s) => s.name.toLowerCase()))
+  const candidateSkillNames = utl.skills.map((s) => s.name.toLowerCase())
+
+  // Fuzzy match: exact OR candidate skill contains required name OR required contains candidate skill
+  function skillMatches(required: string): boolean {
+    return candidateSkillNames.some(
+      (c) => c === required || c.includes(required) || required.includes(c)
+    )
+  }
 
   let weightedScore = 0
   let totalWeight = 0
 
   for (const required of job.required_skills) {
     const skillName = required.name.toLowerCase()
-    const match = candidateSkillNames.has(skillName)
+    const match = skillMatches(skillName)
     const weight = required.weight
 
     if (match) {

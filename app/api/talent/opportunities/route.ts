@@ -1,64 +1,60 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { createClient, createServiceClient } from "@/lib/supabase/server"
+import QRCode from "qrcode"
 
-export async function GET() {
+export const runtime = "nodejs"
+
+export async function GET(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const service = createServiceClient()
 
-  // Find talent's candidate profile
-  const { data: candidate } = await service
-    .from("candidates")
-    .select("id")
-    .eq("user_id", user.id)
-    .single()
+  // Support candidate_id from query param (client polling) or auto-lookup
+  let candidateId = request.nextUrl.searchParams.get("candidate_id")
+  if (!candidateId) {
+    const { data: candidate } = await service
+      .from("candidates").select("id").eq("user_id", user.id).single()
+    candidateId = candidate?.id ?? null
+  }
 
-  if (!candidate) return NextResponse.json({ opportunities: [] })
+  if (!candidateId) return NextResponse.json({ opportunities: [], jobs: [], companies: [], qr_map: {} })
 
   const { data: opportunities } = await service
     .from("talent_opportunities")
     .select("id, job_id, company_id, status, score, telegram_url, created_at")
-    .eq("candidate_id", candidate.id)
+    .eq("candidate_id", candidateId)
     .order("score", { ascending: false })
 
   if (!opportunities || opportunities.length === 0) {
-    return NextResponse.json({ opportunities: [] })
+    return NextResponse.json({ opportunities: [], jobs: [], companies: [], qr_map: {} })
   }
 
-  // Get job details
   const jobIds = opportunities.map((o) => o.job_id)
-  const { data: jobs } = await service
-    .from("jobs")
-    .select("id, utl_job_profile")
-    .in("id", jobIds)
-
-  // Get company names
   const companyIds = [...new Set(opportunities.map((o) => o.company_id))]
-  const { data: companies } = await service
-    .from("companies")
-    .select("id, name")
-    .in("id", companyIds)
 
-  const jobMap = new Map(jobs?.map((j) => [j.id, j]) ?? [])
-  const companyMap = new Map(companies?.map((c) => [c.id, c]) ?? [])
+  const [{ data: jobs }, { data: companies }] = await Promise.all([
+    service.from("jobs").select("id, utl_job_profile").in("id", jobIds),
+    service.from("companies").select("id, name, sector").in("id", companyIds),
+  ])
 
-  const enriched = opportunities.map((opp) => {
-    const job = jobMap.get(opp.job_id)
-    const company = companyMap.get(opp.company_id)
-    const profile = job?.utl_job_profile as { title?: string } | undefined
-    return {
-      ...opp,
-      job_title: profile?.title ?? "Cargo desconocido",
-      company_name: company?.name ?? "Empresa",
+  const qr_map: Record<string, string> = {}
+  for (const opp of opportunities) {
+    if (opp.telegram_url && opp.status === "pending") {
+      try {
+        qr_map[opp.id] = await QRCode.toDataURL(opp.telegram_url, {
+          width: 160, margin: 1,
+          color: { dark: "#4c1d95", light: "#ffffff" },
+        })
+      } catch { /* skip */ }
     }
-  })
+  }
 
-  return NextResponse.json({ opportunities: enriched })
+  return NextResponse.json({ opportunities, jobs: jobs ?? [], companies: companies ?? [], qr_map })
 }
 
-export async function PATCH(request: Request) {
+export async function PATCH(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -68,7 +64,6 @@ export async function PATCH(request: Request) {
 
   const service = createServiceClient()
 
-  // Verify ownership
   const { data: candidate } = await service
     .from("candidates").select("id").eq("user_id", user.id).single()
   if (!candidate) return NextResponse.json({ error: "No candidate profile" }, { status: 403 })

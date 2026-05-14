@@ -3,6 +3,8 @@ import { createClient, createServiceClient } from "@/lib/supabase/server"
 import { UTLJobProfileSchema } from "@/lib/utl/schema"
 import { z } from "zod"
 
+export const maxDuration = 60
+
 const CreateJobBody = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
@@ -83,10 +85,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to create job", details: error?.message }, { status: 500 })
   }
 
-  // Fire-and-forget: match existing talent pool against new job
-  import("@/lib/matching/pipeline").then(({ matchTalentsToJob }) =>
-    matchTalentsToJob(job.id, membership.company_id).catch((e) => console.error("[jobs] matching failed:", e))
-  )
+  // Run matching synchronously before returning — fire-and-forget is killed by Vercel after response
+  try {
+    const { matchTalentsToJob } = await import("@/lib/matching/pipeline")
+    await matchTalentsToJob(job.id, membership.company_id)
+  } catch (e) {
+    console.error("[jobs] matching failed:", e)
+  }
 
   return NextResponse.json({ job_id: job.id })
 }
