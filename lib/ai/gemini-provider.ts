@@ -3,7 +3,7 @@ import type { AIProvider, SummarizeContext } from "./provider"
 import type { AIExtractionOutput, InterviewEvaluation } from "@/lib/utl/schema"
 import { AIExtractionOutputSchema } from "@/lib/utl/schema"
 
-const EXTRACTION_MODEL = "gemini-2.5-flash-preview-05-20"
+const EXTRACTION_MODEL = "gemini-2.0-flash"
 const FLASH_MODEL = "gemini-2.0-flash"
 
 const EXTRACTION_SCHEMA_DESC = `Return ONLY a valid JSON object with this exact structure:
