@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation"
 import { createClient, createServiceClient } from "@/lib/supabase/server"
 import Link from "next/link"
-import { Zap, LayoutDashboard, Star, FileText, LogOut } from "lucide-react"
+import { Zap, LayoutDashboard, Star, FileText, LogOut, User } from "lucide-react"
 
 const NAV = [
   { href: "/talent/dashboard", label: "Inicio", Icon: LayoutDashboard },
   { href: "/talent/cv", label: "Mi CV", Icon: FileText },
+  { href: "/talent/profile", label: "Mi Perfil", Icon: User },
   { href: "/talent/opportunities", label: "Oportunidades", Icon: Star },
 ] as const
 

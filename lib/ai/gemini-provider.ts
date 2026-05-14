@@ -46,7 +46,19 @@ async function runExtraction(parts: Part[]): Promise<AIExtractionOutput> {
   const genAI = createClient()
   const model = genAI.getGenerativeModel({
     model: EXTRACTION_MODEL,
-    systemInstruction: `You are an expert CV parser. Extract all structured data from the CV. ${EXTRACTION_SCHEMA_DESC}`,
+    systemInstruction: `You are an expert CV parser. Extract ALL structured data from the CV with maximum completeness.
+
+CRITICAL RULES:
+- current_title: use the MOST RECENT job title exactly as written
+- skills: extract EVERY specific tool, technology, methodology and soft skill mentioned. Include: specific software (n8n, Zapier, Make, ChatGPT, etc.), programming languages, frameworks, methodologies, and ALL soft skills. Do NOT summarize — list each individually
+- total_experience_months: sum ALL professional experience, exclude student organizations
+- languages: extract ALL languages with exact proficiency levels (native, C1, B2, etc. → map to schema levels)
+- experiences: include ALL roles with exact dates; use null for end_date if current
+- education: include university degrees AND short courses/certifications
+- competency_evidence: extract 3-5 competencies with specific evidence from the CV text
+- confidence_score: 0.0-1.0 based on data completeness
+
+${EXTRACTION_SCHEMA_DESC}`,
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0.1,

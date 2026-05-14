@@ -95,11 +95,13 @@ export async function POST(request: NextRequest) {
 
   let candidateId: string
 
+  const skillsTags = publicUTL.skills.map((s) => s.name.toLowerCase())
+
   if (existing) {
     await service.from("candidates").update({
       public_utl: publicUTL,
       confidence_score: publicUTL.confidence_score,
-      version: existing ? undefined : 1,
+      skills_tags: skillsTags,
     }).eq("id", existing.id)
     candidateId = existing.id
   } else {
@@ -110,6 +112,7 @@ export async function POST(request: NextRequest) {
         confidence_score: publicUTL.confidence_score,
         source_type: "pdf",
         user_id: user.id,
+        skills_tags: skillsTags,
       })
       .select("id")
       .single()

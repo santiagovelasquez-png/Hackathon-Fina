@@ -90,11 +90,21 @@ export async function matchTalentsToJob(jobId: string, companyId: string): Promi
   if (!job) return
   const jobProfile = job.utl_job_profile as UTLJobProfile
 
-  // Get all talent candidates (have user_id set)
-  const { data: candidates } = await service
+  // Pre-filter by skill overlap using GIN index on skills_tags
+  const requiredTags = (jobProfile.required_skills ?? [])
+    .filter((s) => s.required)
+    .map((s) => s.name.toLowerCase())
+
+  let query = service
     .from("candidates")
     .select("id, public_utl")
     .not("user_id", "is", null)
+
+  if (requiredTags.length > 0) {
+    query = query.overlaps("skills_tags", requiredTags)
+  }
+
+  const { data: candidates } = await query
 
   if (!candidates || candidates.length === 0) return
 
