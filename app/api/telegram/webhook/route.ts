@@ -21,7 +21,13 @@ function verifyToken(received: string, stored: string, expiresAt: string): boole
   return hash === stored
 }
 
-function getQuestions() {
+// Read questions stored on the session when the opportunity was created.
+// Falls back to static bank if missing (legacy sessions).
+function getSessionQuestions(sessionAnswers: unknown): typeof QUESTION_BANK {
+  const stored = (sessionAnswers as Record<string, unknown>)?.__questions__
+  if (Array.isArray(stored) && stored.length > 0) {
+    return stored as typeof QUESTION_BANK
+  }
   return QUESTION_BANK.slice(0, TOTAL_QUESTIONS)
 }
 
@@ -79,8 +85,8 @@ async function handleStart(chatId: number, token: string): Promise<void> {
     `¡Hola ${name}! 👋\n\nTe damos la bienvenida a la entrevista para *${jobTitle}*.\n\nVamos a hacerte ${TOTAL_QUESTIONS} preguntas. Responde con tranquilidad y con todo el detalle que necesites. No hay respuestas incorrectas.\n\n¡Empezamos!`
   )
 
-  // Send first question
-  const questions = getQuestions()
+  // Send first question — use job-specific questions stored on session
+  const questions = getSessionQuestions(session.answers)
   const firstQ = questions[session.current_question_index] ?? questions[0]
   await sendQuestion(chatId, firstQ.question_text, session.current_question_index, TOTAL_QUESTIONS)
 }
@@ -107,17 +113,21 @@ async function handleAnswer(chatId: number, text: string): Promise<void> {
     return
   }
 
-  const questions = getQuestions()
+  const questions = getSessionQuestions(session.answers)
   const currentQ = questions[session.current_question_index]
   if (!currentQ) {
     await sendMessage(chatId, "No hay más preguntas. ¡La entrevista ya está completa!")
     return
   }
 
+  // Strip __questions__ from answers before building state (it's a metadata key, not an answer)
+  const rawAnswers = (session.answers as Record<string, unknown>) ?? {}
+  const { __questions__: _q, ...answerEntries } = rawAnswers
+
   const state: InterviewState = {
     status: session.status,
     current_question_index: session.current_question_index,
-    answers: (session.answers as InterviewState["answers"]) ?? {},
+    answers: answerEntries as InterviewState["answers"],
     questions,
   }
 
@@ -151,7 +161,8 @@ async function handleAnswer(chatId: number, text: string): Promise<void> {
   await service.from("interview_sessions").update({
     status: newState.status,
     current_question_index: newState.current_question_index,
-    answers: newState.answers,
+    // Preserve __questions__ metadata alongside actual answers
+    answers: { __questions__: questions, ...newState.answers },
     ...(newState.status === "completed" ? { completed_at: new Date().toISOString() } : {}),
   }).eq("id", session.id)
 

@@ -253,6 +253,77 @@ export async function parseJobProfileFromPDF(buffer: Buffer): Promise<ParsedJobP
   ])
 }
 
+export interface GeneratedQuestion {
+  id: string
+  competency_name: string
+  question_text: string
+  tags: string[]
+}
+
+export async function generateInterviewQuestions(job: {
+  title: string
+  description: string
+  required_skills: Array<{ name: string; required: boolean }>
+  competencies: Array<{ name: string; minimum_score: number }>
+  min_experience_months: number
+}, count = 6): Promise<GeneratedQuestion[]> {
+  const genAI = createClient()
+  const skillList = job.required_skills.map((s) => `${s.name}${s.required ? " (requerido)" : ""}`).join(", ")
+  const compList = job.competencies.map((c) => c.name.replace(/_/g, " ")).join(", ")
+  const expYears = job.min_experience_months > 0 ? `${Math.round(job.min_experience_months / 12)} años` : "no especificada"
+
+  const model = genAI.getGenerativeModel({
+    model: FLASH_MODEL,
+    systemInstruction: `You are a senior HR interviewer. Generate ${count} behavioral interview questions SPECIFICALLY tailored to this job.
+
+RULES:
+- Each question must relate directly to the role, required skills, or competencies listed
+- Questions must be behavioral (STAR format expected): start with "Cuéntame de una vez que..." or "¿Cómo has manejado..." or "Describe una situación donde..."
+- Vary across: technical depth, collaboration, delivery, leadership, domain knowledge
+- For technical roles: include at least 2 questions about specific technologies listed
+- For each competency listed: include at least one question evaluating that competency
+- Questions in Spanish. Concise. No preamble.
+- Return ONLY valid JSON array:
+[{ "id": "custom_1", "competency_name": "snake_case_competency", "question_text": "...", "tags": ["tag1","tag2"] }]`,
+    generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 2048 },
+  })
+
+  const prompt = `CARGO: ${job.title}
+DESCRIPCIÓN: ${job.description.slice(0, 400)}
+SKILLS REQUERIDAS: ${skillList}
+COMPETENCIAS A EVALUAR: ${compList}
+EXPERIENCIA MÍNIMA: ${expYears}
+
+Genera ${count} preguntas de entrevista conductual específicas para este cargo.`
+
+  try {
+    const result = await model.generateContent(prompt)
+    const raw = JSON.parse(result.response.text())
+    const questions: GeneratedQuestion[] = Array.isArray(raw) ? raw : []
+
+    const validated = questions
+      .filter((q) => q.question_text && q.competency_name)
+      .map((q, i) => ({
+        id: q.id || `custom_${i + 1}`,
+        competency_name: String(q.competency_name).toLowerCase().replace(/\s+/g, "_"),
+        question_text: String(q.question_text),
+        tags: Array.isArray(q.tags) ? q.tags.map(String) : [],
+      }))
+
+    if (validated.length >= count) return validated.slice(0, count)
+
+    // Pad with fallback questions if Gemini returned fewer
+    const { QUESTION_BANK } = await import("@/lib/interview/question-bank")
+    const needed = count - validated.length
+    const usedIds = new Set(validated.map((q) => q.id))
+    const fallbacks = QUESTION_BANK.filter((q) => !usedIds.has(q.id)).slice(0, needed)
+    return [...validated, ...fallbacks]
+  } catch {
+    const { QUESTION_BANK } = await import("@/lib/interview/question-bank")
+    return QUESTION_BANK.slice(0, count)
+  }
+}
+
 export async function selectQuestionsWithGemini(
   jobSummary: string,
   questionList: string,

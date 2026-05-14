@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "crypto"
 import { createServiceClient } from "@/lib/supabase/server"
 import { computeScore } from "@/lib/scoring/engine"
-import { selectQuestions } from "@/lib/interview/question-selector"
 import type { PublicUTL, UTLJobProfile } from "@/lib/utl/schema"
 
 const SCORE_THRESHOLD = 4.0
@@ -31,12 +30,23 @@ async function createOpportunity(opts: {
     .single()
   if (existing) return
 
-  // Create interview session
-  const questions = await selectQuestions(jobProfile)
+  // Generate custom interview questions for this specific job using Gemini
+  let questions: Array<{ id: string; competency_name: string; question_text: string; tags: string[] }>
+  try {
+    const { generateInterviewQuestions } = await import("@/lib/ai/gemini-provider")
+    questions = await generateInterviewQuestions(jobProfile as Parameters<typeof generateInterviewQuestions>[0])
+    console.log(`[matching] Generated ${questions.length} custom questions for job=${jobId}`)
+  } catch (e) {
+    console.warn("[matching] Question generation failed, using bank fallback:", e)
+    const { QUESTION_BANK } = await import("@/lib/interview/question-bank")
+    questions = QUESTION_BANK.slice(0, 6)
+  }
+
   const rawToken = randomBytes(32).toString("hex")
   const tokenHash = createHash("sha256").update(rawToken).digest("hex")
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days for talent
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
 
+  // Store questions on the session itself (answers.__questions__) — webhook reads them from here
   const { data: session, error: sessionError } = await service
     .from("interview_sessions")
     .insert({
@@ -45,7 +55,7 @@ async function createOpportunity(opts: {
       channel: "telegram",
       status: "pending",
       current_question_index: 0,
-      answers: {},
+      answers: { __questions__: questions },
       access_token_hash: tokenHash,
       expires_at: expiresAt,
     })
@@ -56,15 +66,6 @@ async function createOpportunity(opts: {
     console.error("[matching] Failed to create session:", sessionError)
     return
   }
-
-  // Store selected questions
-  await Promise.resolve(service.from("normalized_inputs").insert({
-    candidate_id: candidateId,
-    raw_text: JSON.stringify(questions.map((q) => q.id)),
-    adapter_used: "matching-pipeline",
-    ai_draft: { selected_questions: questions },
-    validation_errors: null,
-  })).catch(() => {})
 
   const telegramUrl = buildTelegramUrl(rawToken)
 
