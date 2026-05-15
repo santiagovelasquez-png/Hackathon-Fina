@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "crypto"
 import { createServiceClient } from "@/lib/supabase/server"
-import { computeScore } from "@/lib/scoring/engine"
+import { computeScore, getMatchTier } from "@/lib/scoring/engine"
 import type { PublicUTL, UTLJobProfile } from "@/lib/utl/schema"
 
-const SCORE_THRESHOLD = 3.0
+// V2: no hard threshold — always return top N regardless of absolute score
 const MAX_OPPORTUNITIES = 5
 
 function buildTelegramUrl(rawToken: string): string {
@@ -113,31 +113,30 @@ export async function matchTalentsToJob(jobId: string, companyId: string): Promi
     return
   }
 
-  // Score all qualifying candidates
+  // Score ALL candidates — V2: no threshold, always return top N
   const scored: Array<{ candidateId: string; score: number }> = []
   for (const candidate of candidates) {
     try {
       const utl = candidate.public_utl as PublicUTL
       const result = computeScore(utl, jobProfile)
-      if (result.total_score >= SCORE_THRESHOLD && !result.exclusion_reason) {
-        scored.push({ candidateId: candidate.id, score: result.total_score })
-      }
+      scored.push({ candidateId: candidate.id, score: result.total_score })
     } catch (e) {
       console.error(`[matching] Error scoring candidate ${candidate.id}:`, e)
     }
   }
 
-  // Rank and take top MAX_OPPORTUNITIES
+  // Always take top MAX_OPPORTUNITIES by score — no floor
   const top = scored
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_OPPORTUNITIES)
 
-  console.log(`[matching] job=${jobId}: ${candidates.length} candidates scored, ${scored.length} qualify, selecting top ${top.length}`)
+  const tierLog = top.map((t) => `${t.candidateId.slice(0, 8)}=${t.score}(${getMatchTier(t.score)})`).join(", ")
+  console.log(`[matching] job=${jobId}: ${candidates.length} scored, top ${top.length}: [${tierLog}]`)
 
   for (const { candidateId, score } of top) {
     try {
       await createOpportunity({ candidateId, jobId, companyId, score, jobProfile })
-      console.log(`[matching] opportunity created: candidate=${candidateId} score=${score}`)
+      console.log(`[matching] opportunity created: candidate=${candidateId} score=${score} tier=${getMatchTier(score)}`)
     } catch (e) {
       console.error(`[matching] failed to create opportunity for candidate=${candidateId}:`, e)
     }
@@ -169,9 +168,7 @@ export async function matchJobsToTalent(candidateId: string): Promise<void> {
       const jobProfile = job.utl_job_profile as UTLJobProfile
       const result = computeScore(utl, jobProfile)
 
-      if (result.total_score < SCORE_THRESHOLD || result.exclusion_reason) continue
-
-      // Check if this candidate would rank in the top MAX_OPPORTUNITIES for this job
+      // V2: no threshold — check if candidate ranks in top N for this job
       const { data: existingOps } = await service
         .from("talent_opportunities")
         .select("score")
@@ -182,7 +179,7 @@ export async function matchJobsToTalent(candidateId: string): Promise<void> {
       const count = existingOps?.length ?? 0
       const lowestTop = existingOps?.[count - 1]?.score ?? 0
 
-      // Slot available OR new candidate beats the lowest in current top-5
+      // Slot available OR new candidate beats the lowest in current top-N
       if (count < MAX_OPPORTUNITIES || result.total_score > lowestTop) {
         await createOpportunity({
           candidateId,

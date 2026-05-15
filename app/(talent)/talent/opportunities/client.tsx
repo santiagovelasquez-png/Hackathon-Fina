@@ -38,16 +38,33 @@ function StatusBadge({ status }: { status: string }) {
   return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-100 text-violet-700 border border-violet-200"><Clock size={11} /> Pendiente</span>
 }
 
+type MatchTier = "FUERTE" | "BUENO" | "PARCIAL" | "DÉBIL"
+
+function getTier(score: number): MatchTier {
+  if (score >= 7.0) return "FUERTE"
+  if (score >= 5.0) return "BUENO"
+  if (score >= 3.0) return "PARCIAL"
+  return "DÉBIL"
+}
+
 function ScorePill({ score }: { score: number }) {
-  const cfg = score >= 8
-    ? "bg-emerald-100 text-emerald-700 border-emerald-200"
-    : score >= 6
-    ? "bg-blue-100 text-blue-700 border-blue-200"
-    : "bg-amber-100 text-amber-700 border-amber-200"
+  const tier = getTier(score)
+  const cfg: Record<MatchTier, string> = {
+    FUERTE: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    BUENO: "bg-blue-100 text-blue-700 border-blue-200",
+    PARCIAL: "bg-amber-100 text-amber-700 border-amber-200",
+    DÉBIL: "bg-slate-100 text-slate-500 border-slate-200",
+  }
+  const dot: Record<MatchTier, string> = {
+    FUERTE: "bg-emerald-500",
+    BUENO: "bg-blue-500",
+    PARCIAL: "bg-amber-500",
+    DÉBIL: "bg-slate-400",
+  }
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${cfg}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {Number(score).toFixed(1)} match
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${cfg[tier]}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dot[tier]}`} />
+      {Number(score).toFixed(1)} · {tier}
     </span>
   )
 }
